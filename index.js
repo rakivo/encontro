@@ -20,7 +20,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-let peerConnections = {};
 let localStream;
 let localVideo;
 let peerConnection;
@@ -63,82 +62,36 @@ async function pageReady() {
   }
 }
 
-function startConnection(isCaller, remoteId) {
-    const peerConnection = new RTCPeerConnection(peerConnectionConfig);
+function start(isCaller) {
+  peerConnection = new RTCPeerConnection(peerConnectionConfig);
+  peerConnection.onicecandidate = gotIceCandidate;
+  peerConnection.ontrack = gotRemoteStream;
 
-    peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-            serverConnection.send(JSON.stringify({
-                ice: event.candidate,
-                uuid: uuid,
-                target: remoteId,
-            }));
-        }
-    };
+  for(const track of localStream.getTracks()) {
+    peerConnection.addTrack(track, localStream);
+  }
 
-    peerConnection.ontrack = (event) => {
-        const remoteVideo = document.createElement('video');
-        remoteVideo.srcObject = event.streams[0];
-        remoteVideo.autoplay = true;
-        document.body.appendChild(remoteVideo);
-    };
-
-    for (const track of localStream.getTracks()) {
-        peerConnection.addTrack(track, localStream);
-    }
-
-    peerConnections[remoteId] = peerConnection;
-
-    if (isCaller) {
-        peerConnection.createOffer()
-            .then((description) => {
-                peerConnection.setLocalDescription(description);
-                serverConnection.send(JSON.stringify({
-                    sdp: description,
-                    uuid: uuid,
-                    target: remoteId,
-                }));
-            })
-            .catch(errorHandler);
-    }
+  if (isCaller) {
+    peerConnection.createOffer().then(createdDescription).catch(errorHandler);
+  }
 }
 
 function gotMessageFromServer(message) {
-  if (!peerConnection) startConnection(false);
+  if (!peerConnection) start(false);
 
   const signal = JSON.parse(message.data);
 
   // Ignore messages from ourself
   if (signal.uuid == uuid) return;
 
-  const targetId = signal.target;
-
   if (signal.sdp) {
-      if (!peerConnections[targetId]) {
-          startConnection(false, targetId);
-      }
-
-      peerConnections[targetId].setRemoteDescription(new RTCSessionDescription(signal.sdp))
-          .then(() => {
-              if (signal.sdp.type === 'offer') {
-                  peerConnections[targetId].createAnswer()
-                      .then((description) => {
-                          peerConnections[targetId].setLocalDescription(description);
-                          serverConnection.send(JSON.stringify({
-                              sdp: description,
-                              uuid: uuid,
-                              target: targetId,
-                          }));
-                      })
-                      .catch(errorHandler);
-              }
-          })
-          .catch(errorHandler);
+    peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp)).then(() => {
+      // Only create answers in response to offers
+      if (signal.sdp.type !== 'offer') return;
+      peerConnection.createAnswer().then(createdDescription).catch(errorHandler);
+    }).catch(errorHandler);
   } else if (signal.ice) {
-      peerConnections[targetId].addIceCandidate(new RTCIceCandidate(signal.ice))
-          .catch(errorHandler);
-  } else if (signal.type === 'new_user') {
-    startConnection(true, targetId);
+    peerConnection.addIceCandidate(new RTCIceCandidate(signal.ice)).catch(errorHandler);
   }
 }
 

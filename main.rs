@@ -43,23 +43,13 @@ impl Actor for WsActor {
         };
 
         actix::spawn({
-            let id = self.id;
             let room = Box::clone(&self.room);
             let rooms = Data::clone(&self.rooms);
             async move {
                 let mut rooms = rooms.lock().await;
-                let room_conns = rooms.entry(Box::clone(&room)).or_default();
-                room_conns.insert(id, conn);
-
-                if let Some(conns) = rooms.get(&room) {
-                    for (peer_id, conn) in conns.iter() {
-                        if *peer_id != id {
-                            _ = conn.addr.do_send(Broadcast(format!(
-                                r#"{{"type":"new_user","uuid":"{id}"}}"#,
-                            )));
-                        }
-                    }
-                }
+                rooms.entry(room)
+                    .or_default()
+                    .insert(conn.id, conn);
             }
         });
     }
