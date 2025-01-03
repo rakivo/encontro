@@ -7,6 +7,10 @@ edition = "2021"
 name = "encontro"
 path = "main.rs"
 
+[features]
+gen_crt = ["rustls-pemfile"]
+default = ["rcgen"]
+
 [dependencies]
 actix-web = { version = "4.9", features = ["rustls-0_21"] }
 actix-files = { version = "0.6", default-features = false }
@@ -16,4 +20,6 @@ actix = { version = "0.13.5", default-features = false, features = ["macros"] }
 tokio = { version = "1.35", features = ["sync"] }
 
 rustls = { version = "0.21", default-features = false }
-rcgen = { version = "0.13.2", default-features = false, features = ["ring", "crypto"] }
+
+rustls-pemfile = { version = "1.0", default-features = false, optional = true }
+rcgen = { version = "0.13.2", default-features = false, features = ["ring", "crypto"], optional = true }

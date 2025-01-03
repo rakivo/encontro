@@ -1,3 +1,4 @@
 *.pem
+certs
 target
 Cargo.lock
