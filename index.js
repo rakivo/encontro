@@ -39,7 +39,7 @@ function start() {
         };
       }).catch(errorHandler);
   } else {
-    alert("Your browser does not support getUserMedia API");
+    alert("Your browser does not support getDisplayMedia API");
   }
 }
 
