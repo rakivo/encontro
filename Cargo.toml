@@ -8,8 +8,8 @@ name = "encontro"
 path = "main.rs"
 
 [features]
-gen_crt = ["rustls-pemfile"]
-default = ["rcgen"]
+gen_crt = ["dep:rustls-pemfile"]
+default = ["dep:rcgen"]
 
 [dependencies]
 actix-web = { version = "4.9", features = ["rustls-0_21"] }

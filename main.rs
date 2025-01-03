@@ -80,7 +80,7 @@ impl StreamHandler::<Result<ws::Message, ws::ProtocolError>> for WsActor {
     }
 }
 
-impl Handler<Broadcast> for WsActor {
+impl Handler::<Broadcast> for WsActor {
     type Result = ();
 
     #[inline]
@@ -99,47 +99,33 @@ async fn ws_route(rq: HttpRequest, stream: Payload, conns: Data::<AtomicConns>) 
 #[cfg(feature = "gen_crt")]
 fn get_signaling_cfg() -> ServerConfig {
     use {
+        std::io::BufReader,
         actix_web::web::Buf,
-        std::{path::Path, io::BufReader},
-        rustls_pemfile::{certs, pkcs8_private_keys}
+        rustls::{Certificate, PrivateKey},
+        rustls_pemfile::{certs, rsa_private_keys, pkcs8_private_keys}
     };
-
-    if !Path::new("./certs/key.pem").exists() || !Path::new("./certs/cert.pem").exists() {
-        panic!("run `bash ./gen_crt.sh first")
-    }
 
     let key_file = &mut BufReader::new(include_bytes!("./certs/key.pem").reader());
     let cert_file = &mut BufReader::new(include_bytes!("./certs/cert.pem").reader());
 
-    let cert_chain = certs(cert_file)
-        .unwrap()
-        .into_iter()
-        .map(rustls::Certificate)
-        .collect();
-
-    let mut keys = pkcs8_private_keys(key_file)
-        .unwrap()
-        .into_iter()
-        .map(rustls::PrivateKey)
-        .collect::<Vec::<rustls::PrivateKey>>();
+    let mut keys = pkcs8_private_keys(key_file).unwrap().into_iter().map(PrivateKey).collect::<Vec::<_>>();
 
     if keys.is_empty() {
         let key_file = &mut BufReader::new(include_bytes!("./certs/key.pem").reader());
-        keys = rustls_pemfile::rsa_private_keys(key_file)
-            .unwrap()
-            .into_iter()
-            .map(rustls::PrivateKey)
-            .collect()
+        keys = rsa_private_keys(key_file).unwrap().into_iter().map(PrivateKey).collect()
     }
 
     if keys.is_empty() {
         panic!("no valid private key found")
     }
 
+    let cert_chain = certs(cert_file).unwrap().into_iter().map(Certificate).collect();
+    let key = keys.remove(0);
+
     ServerConfig::builder()
         .with_safe_defaults()
         .with_no_client_auth()
-        .with_single_cert(cert_chain, keys.remove(0))
+        .with_single_cert(cert_chain, key)
         .expect("failed to create server config")
 }
 
