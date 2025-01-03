@@ -1,129 +1,195 @@
-// The MIT License (MIT)
+let localUuid, localDisplayName, localStream, serverConnection;
+let peerConnections = {};
+const WS_PORT = 8443;
 
-// Copyright (c) 2014 Shane Tully
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
-
-let localStream;
-let localVideo;
-let peerConnection;
-let remoteVideo;
-let serverConnection;
-let uuid;
-
-const peerConnectionConfig = {
-  'iceServers': [
-    {'urls': 'stun:stun.stunprotocol.org:3478'},
-    {'urls': 'stun:stun.l.google.com:19302'},
-  ]
+const PEER_CONNECTION_CFG = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+  ],
 };
 
-async function pageReady() {
-  uuid = createUUID();
+function start() {
+  localUuid = createUUID();
 
-  localVideo = document.getElementById('localVideo');
-  remoteVideo = document.getElementById('remoteVideo');
+  const urlParams = new URLSearchParams(window.location.search);
+  localDisplayName = urlParams.get("displayName") || prompt("Enter your name", "") || localUuiod;
 
-  serverConnection = new WebSocket('wss://localhost:8443/ws/room1');
-  serverConnection.onmessage = gotMessageFromServer;
+  document
+    .getElementById("localVideoContainer")
+    .appendChild(makeLabel(localDisplayName));
 
   const constraints = {
-    video: true,
-    audio: false
+    video: { width: { max: 320 }, height: { max: 240 }, frameRate: { max: 30 } },
+    audio: false,
   };
 
-  if (!navigator.mediaDevices.getUserMedia) {
-    alert('Your browser does not support getUserMedia API');
-    return;
-  }
-
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    localStream = stream;
-    localVideo.srcObject = stream;
-  } catch(error) {
-    errorHandler(error);
-  }
-}
-
-function start(isCaller) {
-  peerConnection = new RTCPeerConnection(peerConnectionConfig);
-  peerConnection.onicecandidate = gotIceCandidate;
-  peerConnection.ontrack = gotRemoteStream;
-
-  for(const track of localStream.getTracks()) {
-    peerConnection.addTrack(track, localStream);
-  }
-
-  if (isCaller) {
-    peerConnection.createOffer().then(createdDescription).catch(errorHandler);
+  if (navigator.mediaDevices.getUserMedia) {
+    navigator.mediaDevices.getDisplayMedia(constraints)
+      .then((stream) => {
+        localStream = stream;
+        document.getElementById("localVideo").srcObject = stream;
+      }).catch(errorHandler).then(() => {
+        serverConnection = new WebSocket('wss://localhost:8443/ws/room1');
+        serverConnection.onmessage = gotMessageFromServer;
+        serverConnection.onopen = () => {
+          serverConnection.send(
+            JSON.stringify({
+              displayName: localDisplayName,
+              uuid: localUuid,
+              dest: "all",
+            })
+          );
+        };
+      }).catch(errorHandler);
+  } else {
+    alert("Your browser does not support getUserMedia API");
   }
 }
 
 function gotMessageFromServer(message) {
-  if (!peerConnection) start(false);
-
   const signal = JSON.parse(message.data);
+  const peerUuid = signal.uuid;
 
-  // Ignore messages from ourself
-  if (signal.uuid == uuid) return;
+  if (peerUuid === localUuid || (signal.dest !== localUuid && signal.dest !== "all")) return;
 
-  if (signal.sdp) {
-    peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp)).then(() => {
-      // Only create answers in response to offers
-      if (signal.sdp.type !== 'offer') return;
-      peerConnection.createAnswer().then(createdDescription).catch(errorHandler);
-    }).catch(errorHandler);
+  if (signal.type === "peer-disconnect") {
+    const peerUuid = signal.uuid;
+    if (peerConnections[peerUuid]) {
+      console.log(`Peer ${peerUuid} disconnected`);
+      delete peerConnections[peerUuid];
+      document.getElementById('videos').removeChild(document.getElementById('remoteVideo_' + peerUuid));
+      updateLayout();
+    }
+    return;
+  }
+
+  if (signal.displayName && signal.dest === "all") {
+    setUpPeer(peerUuid, signal.displayName);
+    serverConnection.send(JSON.stringify({
+      displayName: localDisplayName,
+      uuid: localUuid,
+      dest: peerUuid,
+    }));
+  } else if (signal.displayName && signal.dest === localUuid) {
+    setUpPeer(peerUuid, signal.displayName, true);
+  } else if (signal.sdp) {
+    peerConnections[peerUuid].pc
+      .setRemoteDescription(new RTCSessionDescription(signal.sdp))
+      .then(() => {
+        if (signal.sdp.type === "offer") {
+          peerConnections[peerUuid].pc.createAnswer()
+            .then((description) => createdDescription(description, peerUuid))
+            .catch(errorHandler);
+        }
+      }).catch(errorHandler);
   } else if (signal.ice) {
-    peerConnection.addIceCandidate(new RTCIceCandidate(signal.ice)).catch(errorHandler);
+    peerConnections[peerUuid].pc
+      .addIceCandidate(new RTCIceCandidate(signal.ice))
+      .catch(errorHandler);
   }
 }
 
-function gotIceCandidate(event) {
+function setUpPeer(peerUuid, displayName, initCall = false) {
+  peerConnections[peerUuid] = {
+    displayName,
+    pc: new RTCPeerConnection(PEER_CONNECTION_CFG),
+  };
+  peerConnections[peerUuid].pc.onicecandidate = (event) => gotIceCandidate(event, peerUuid);
+  peerConnections[peerUuid].pc.ontrack = (event) => gotRemoteStream(event, peerUuid);
+  peerConnections[peerUuid].pc.oniceconnectionstatechange = (event) => checkPeerDisconnect(event, peerUuid);
+  peerConnections[peerUuid].pc.addStream(localStream);
+
+  if (initCall) {
+    peerConnections[peerUuid].pc.createOffer()
+      .then((description) => createdDescription(description, peerUuid))
+      .catch(errorHandler);
+  }
+}
+
+function gotRemoteStream(event, peerUuid) {
+  const vidElement = document.createElement("video");
+  vidElement.setAttribute("autoplay", "");
+  vidElement.setAttribute("muted", "");
+  vidElement.srcObject = event.streams[0];
+
+  const vidContainer = document.createElement("div");
+  vidContainer.setAttribute("id", `remoteVideo_${peerUuid}`);
+  vidContainer.setAttribute("class", "videoContainer");
+  vidContainer.appendChild(vidElement);
+  vidContainer.appendChild(makeLabel(peerConnections[peerUuid].displayName));
+
+  document.getElementById("videos").appendChild(vidContainer);
+
+  updateLayout();
+}
+
+function checkPeerDisconnect(event, peerUuid) {
+  const state = peerConnections[peerUuid].pc.iceConnectionState;
+  if (["failed", "closed", "disconnected"].includes(state)) {
+    delete peerConnections[peerUuid];
+    const vidElement = document.getElementById(`remoteVideo_${peerUuid}`);
+    if (vidElement) document.getElementById("videos").removeChild(vidElement);
+    updateLayout();
+  }
+}
+
+function gotIceCandidate(event, peerUuid) {
   if (event.candidate != null) {
-    serverConnection.send(JSON.stringify({'ice': event.candidate, 'uuid': uuid}));
+    serverConnection.send(
+      JSON.stringify({
+        ice: event.candidate,
+        uuid: localUuid,
+        dest: peerUuid,
+      })
+    );
   }
 }
 
-function createdDescription(description) {
-  console.log('got description');
-
-  peerConnection.setLocalDescription(description).then(() => {
-    serverConnection.send(JSON.stringify({'sdp': peerConnection.localDescription, 'uuid': uuid}));
-  }).catch(errorHandler);
+function createdDescription(description, peerUuid) {
+  peerConnections[peerUuid].pc
+    .setLocalDescription(description)
+    .then(() => {
+      serverConnection.send(
+        JSON.stringify({
+          sdp: peerConnections[peerUuid].pc.localDescription,
+          uuid: localUuid,
+          dest: peerUuid,
+        })
+      );
+    })
+    .catch(errorHandler);
 }
 
-function gotRemoteStream(event) {
-  console.log('got remote stream');
-  remoteVideo.srcObject = event.streams[0];
+function updateLayout() {
+  const numVideos = Object.keys(peerConnections).length + 1;
+  const rowHeight = numVideos > 1 && numVideos <= 4 ? "48vh" : numVideos > 4 ? "32vh" : "98vh";
+  const colWidth = numVideos > 1 && numVideos <= 4 ? "48vw" : numVideos > 4 ? "32vw" : "98vw";
+
+  document.documentElement.style.setProperty("--rowHeight", rowHeight);
+  document.documentElement.style.setProperty("--colWidth", colWidth);
+}
+
+function makeLabel(label) {
+  const vidLabel = document.createElement("div");
+  vidLabel.appendChild(document.createTextNode(label));
+  vidLabel.setAttribute("class", "videoLabel");
+  return vidLabel;
+}
+
+function createUUID() {
+  return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, (c) =>
+    (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)
+  );
 }
 
 function errorHandler(error) {
-  console.log(error);
+  console.error(error);
 }
 
-// Taken from http://stackoverflow.com/a/105074/515584
-// Strictly speaking, it's not a real UUID, but it gets the job done here
-function createUUID() {
-  function s4() {
-    return Math.floor((1 + Math.random()) * 0x10000).toString(16).substring(1);
-  }
-
-  return `${s4() + s4()}-${s4()}-${s4()}-${s4()}-${s4() + s4() + s4()}`;
-}
+window.addEventListener("beforeunload", () => {
+  serverConnection.send(JSON.stringify({ 
+    type: "peer-disconnect", 
+    uuid: localUuid 
+  }));
+});
