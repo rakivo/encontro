@@ -2,71 +2,57 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use std::sync::atomic::{Ordering, AtomicUsize};
 
-use tokio::sync::Mutex;
 use actix_files::Files;
+use tokio::sync::RwLock;
 use rcgen::CertifiedKey;
 use actix_web_actors::ws;
 use rustls::ServerConfig;
 use actix::{Actor, Handler, Message, Recipient, ActorContext, AsyncContext, StreamHandler};
-use actix_web::{get, App, Error, HttpRequest, HttpResponse, HttpServer, web::{Data, Path, Payload}};
+use actix_web::{get, App, Error, HttpRequest, HttpResponse, HttpServer, web::{Data, Payload}};
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
+type Conns = HashMap::<usize, WsConn>;
+type AtomicConns = Arc::<RwLock::<Conns>>;
+
 struct WsConn {
     id: usize,
-    #[allow(unused)] room: Box::<str>,
     addr: Recipient::<Broadcast>
 }
 
 struct WsActor {
     id: usize,
-    room: Box::<str>,
-    rooms: Data::<AtomicRooms>
+    conns: Data::<AtomicConns>
 }
 
 #[derive(Message)]
 #[rtype(result = "()")]
 struct Broadcast(String);
 
-type Rooms = HashMap::<Box::<str>, HashMap::<usize, WsConn>>;
-type AtomicRooms = Arc::<Mutex::<Rooms>>;
-
 impl Actor for WsActor {
     type Context = ws::WebsocketContext::<Self>;
 
+    #[inline]
     fn started(&mut self, ctx: &mut Self::Context) {
         let addr = ctx.address().recipient();
-        let conn = WsConn {
-            id: self.id,
-            addr,
-            room: Box::clone(&self.room)
-        };
-
+        let conn = WsConn { id: self.id, addr };
         actix::spawn({
-            let room = Box::clone(&self.room);
-            let rooms = Data::clone(&self.rooms);
+            let conns = Data::clone(&self.conns);
             async move {
-                let mut rooms = rooms.lock().await;
-                rooms.entry(room)
-                    .or_default()
-                    .insert(conn.id, conn);
+                let mut conns = conns.write().await;
+                conns.insert(conn.id, conn);
             }
         });
     }
 
+    #[inline]
     fn stopped(&mut self, _: &mut Self::Context) {
         actix::spawn({
             let id = self.id;
-            let room = Box::clone(&self.room);
-            let rooms = Data::clone(&self.rooms);
+            let conns = Data::clone(&self.conns);
             async move {
-                let mut rooms = rooms.lock().await;
-                if let Some(room_conns) = rooms.get_mut(&room) {
-                    room_conns.remove(&id);
-                    if room_conns.is_empty() {
-                        rooms.remove(&room);
-                    }
-                }
+                let mut conns = conns.write().await;
+                conns.remove(&id);
             }
         });
     }
@@ -77,17 +63,12 @@ impl StreamHandler::<Result<ws::Message, ws::ProtocolError>> for WsActor {
         match msg {
             Ok(ws::Message::Text(text)) => {
                 let src_id = self.id;
-                let room = Box::clone(&self.room);
-                let rooms = Data::clone(&self.rooms);
-
-                // broadcast message
+                let conns = Data::clone(&self.conns);
                 actix::spawn(async move {
-                    let rooms = rooms.lock().await;
-                    if let Some(conns) = rooms.get(&room) {
-                        conns.iter().filter(|(id, ..)| **id != src_id).for_each(|(.., conn)| {
-                            _ = conn.addr.do_send(Broadcast(text.to_string()))
-                        })
-                    }
+                    let conns = conns.read().await;
+                    conns.iter().filter(|(id, ..)| **id != src_id).for_each(|(.., conn)| {
+                        _ = conn.addr.do_send(Broadcast(text.to_string()))
+                    })
                 });
             }
             Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
@@ -109,16 +90,11 @@ impl Handler<Broadcast> for WsActor {
     }
 }
 
-#[get("/ws/{room}")]
-async fn ws_route(rq: HttpRequest, stream: Payload, room: Path::<String>, rooms: Data::<AtomicRooms>) -> Result::<HttpResponse, Error> {
+#[inline]
+#[get("/ws/")]
+async fn ws_route(rq: HttpRequest, stream: Payload, conns: Data::<AtomicConns>) -> Result::<HttpResponse, Error> {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let actor = WsActor {
-        id,
-        room: room.into_inner().into_boxed_str(),
-        rooms: rooms.clone(),
-    };
-
-    ws::start(actor, &rq, stream)
+    ws::start(WsActor { id, conns }, &rq, stream)
 }
 
 #[actix_web::main]
@@ -136,7 +112,7 @@ async fn main() -> std::io::Result<()> {
         .with_single_cert(vec![cert_chain], key)
         .expect("failed to create server config");
 
-    let rooms = Arc::new(Mutex::new(Rooms::new()));
+    let conns = Arc::new(RwLock::new(Conns::new()));
 
     println!("starting server at <https://localhost:8443>");
     println!("please note:");
@@ -147,7 +123,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .service(ws_route)
-            .app_data(Data::new(Arc::clone(&rooms)))
+            .app_data(Data::new(Arc::clone(&conns)))
             .service(Files::new("/", ".").index_file("index.html"))
     }).bind_rustls_021("0.0.0.0:8443", cfg)?.run().await
 }

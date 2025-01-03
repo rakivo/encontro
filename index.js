@@ -30,7 +30,7 @@ function start() {
         localStream = stream;
         document.getElementById("localVideo").srcObject = stream;
       }).catch(errorHandler).then(() => {
-        serverConnection = new WebSocket('wss://localhost:8443/ws/room1');
+        serverConnection = new WebSocket('wss://localhost:8443/ws/');
         serverConnection.onmessage = gotMessageFromServer;
         serverConnection.onopen = () => {
           serverConnection.send(
