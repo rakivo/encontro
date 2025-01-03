@@ -1,5 +1,6 @@
 #!/bin/bash
 
+mkdir -p certs
 cd certs
 openssl req -x509 \
     -newkey rsa:4096 \
