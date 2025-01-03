@@ -22,7 +22,7 @@ function start() {
     audio: false
   };
 
-  if (navigator.mediaDevices.getUserMedia) {
+  if (navigator.mediaDevices.getDisplayMedia) {
     navigator.mediaDevices.getDisplayMedia(CONSTRAINTS)
       .then((stream) => {
         localStream = stream;
