@@ -1,7 +1,7 @@
-let localUuid, localDisplayName, localStream, serverConnection;
 let peerConnections = {};
-const WS_PORT = 8443;
+let localUuid, localDisplayName, localStream, serverConnection;
 
+const WS_PORT = 8443;
 const PEER_CONNECTION_CFG = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
@@ -13,39 +13,42 @@ function start() {
   localUuid = createUUID();
 
   const urlParams = new URLSearchParams(window.location.search);
-  localDisplayName = urlParams.get("displayName") || prompt("Enter your name", "") || localUuiod;
+  localDisplayName = urlParams.get("displayName") || localUuid;
 
-  document
-    .getElementById("localVideoContainer")
-    .appendChild(makeLabel(localDisplayName));
+  document.getElementById("localVideoContainer").appendChild(makeLabel(localDisplayName));
 
-  const constraints = {
+  const CONSTRAINTS = {
     video: { width: { max: 320 }, height: { max: 240 }, frameRate: { max: 30 } },
-    audio: false,
+    audio: false
   };
 
   if (navigator.mediaDevices.getUserMedia) {
-    navigator.mediaDevices.getDisplayMedia(constraints)
+    navigator.mediaDevices.getDisplayMedia(CONSTRAINTS)
       .then((stream) => {
         localStream = stream;
         document.getElementById("localVideo").srcObject = stream;
       }).catch(errorHandler).then(() => {
-        serverConnection = new WebSocket('wss://localhost:8443/ws/');
+        serverConnection = new WebSocket(`wss://${location.hostname}:8443/ws/`);
         serverConnection.onmessage = gotMessageFromServer;
         serverConnection.onopen = () => {
-          serverConnection.send(
-            JSON.stringify({
-              displayName: localDisplayName,
-              uuid: localUuid,
-              dest: "all",
-            })
-          );
+          serverConnection.send(JSON.stringify({
+            displayName: localDisplayName,
+            uuid: localUuid,
+            dest: "all",
+          }));
         };
       }).catch(errorHandler);
   } else {
     alert("Your browser does not support getUserMedia API");
   }
 }
+
+window.addEventListener("beforeunload", () => {
+  serverConnection.send(JSON.stringify({
+    type: "peer-disconnect",
+    uuid: localUuid
+  }));
+});
 
 function gotMessageFromServer(message) {
   const signal = JSON.parse(message.data);
@@ -78,7 +81,8 @@ function gotMessageFromServer(message) {
       .setRemoteDescription(new RTCSessionDescription(signal.sdp))
       .then(() => {
         if (signal.sdp.type === "offer") {
-          peerConnections[peerUuid].pc.createAnswer()
+          peerConnections[peerUuid].pc
+            .createAnswer()
             .then((description) => createdDescription(description, peerUuid))
             .catch(errorHandler);
         }
@@ -99,9 +103,9 @@ function setUpPeer(peerUuid, displayName, initCall = false) {
   peerConnections[peerUuid].pc.ontrack = (event) => gotRemoteStream(event, peerUuid);
   peerConnections[peerUuid].pc.oniceconnectionstatechange = (event) => checkPeerDisconnect(event, peerUuid);
   peerConnections[peerUuid].pc.addStream(localStream);
-
   if (initCall) {
-    peerConnections[peerUuid].pc.createOffer()
+    peerConnections[peerUuid].pc
+      .createOffer()
       .then((description) => createdDescription(description, peerUuid))
       .catch(errorHandler);
   }
@@ -136,13 +140,11 @@ function checkPeerDisconnect(event, peerUuid) {
 
 function gotIceCandidate(event, peerUuid) {
   if (event.candidate != null) {
-    serverConnection.send(
-      JSON.stringify({
-        ice: event.candidate,
-        uuid: localUuid,
-        dest: peerUuid,
-      })
-    );
+    serverConnection.send(JSON.stringify({
+      ice: event.candidate,
+      uuid: localUuid,
+      dest: peerUuid,
+    }));
   }
 }
 
@@ -150,22 +152,18 @@ function createdDescription(description, peerUuid) {
   peerConnections[peerUuid].pc
     .setLocalDescription(description)
     .then(() => {
-      serverConnection.send(
-        JSON.stringify({
-          sdp: peerConnections[peerUuid].pc.localDescription,
-          uuid: localUuid,
-          dest: peerUuid,
-        })
-      );
-    })
-    .catch(errorHandler);
+      serverConnection.send(JSON.stringify({
+        sdp: peerConnections[peerUuid].pc.localDescription,
+        uuid: localUuid,
+        dest: peerUuid,
+      }));
+    }).catch(errorHandler);
 }
 
 function updateLayout() {
   const numVideos = Object.keys(peerConnections).length + 1;
   const rowHeight = numVideos > 1 && numVideos <= 4 ? "48vh" : numVideos > 4 ? "32vh" : "98vh";
-  const colWidth = numVideos > 1 && numVideos <= 4 ? "48vw" : numVideos > 4 ? "32vw" : "98vw";
-
+  const colWidth  = numVideos > 1 && numVideos <= 4 ? "48vw" : numVideos > 4 ? "32vw" : "98vw";
   document.documentElement.style.setProperty("--rowHeight", rowHeight);
   document.documentElement.style.setProperty("--colWidth", colWidth);
 }
@@ -186,10 +184,3 @@ function createUUID() {
 function errorHandler(error) {
   console.error(error);
 }
-
-window.addEventListener("beforeunload", () => {
-  serverConnection.send(JSON.stringify({ 
-    type: "peer-disconnect", 
-    uuid: localUuid 
-  }));
-});
