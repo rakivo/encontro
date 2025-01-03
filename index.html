@@ -1,46 +1,21 @@
-<!-- The MIT License (MIT) -->
-
-<!-- Copyright (c) 2014 Shane Tully -->
-
-<!-- Permission is hereby granted, free of charge, to any person obtaining a copy -->
-<!-- of this software and associated documentation files (the "Software"), to deal -->
-<!-- in the Software without restriction, including without limitation the rights -->
-<!-- to use, copy, modify, merge, publish, distribute, sublicense, and/or sell -->
-<!-- copies of the Software, and to permit persons to whom the Software is -->
-<!-- furnished to do so, subject to the following conditions: -->
-
-<!-- The above copyright notice and this permission notice shall be included in -->
-<!-- all copies or substantial portions of the Software. -->
-
-<!-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR -->
-<!-- IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, -->
-<!-- FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE -->
-<!-- AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER -->
-<!-- LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, -->
-<!-- OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN -->
-<!-- THE SOFTWARE. -->
-
-<!DOCTYPE html>
 <html>
-  <head>
-    <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
-    <script src="index.js"></script>
-  </head>
-
-  <body>
-    <video id="localVideo" autoplay playsinline muted style="width:40%;"></video>
-    <video id="remoteVideo" autoplay playsinline style="width:40%;"></video>
-
-    <div style="margin-top: 10px;">
-      Open this page in a second browser window then click below to start the WebRTC connection.
+<head>
+  <link rel="icon" href="data:,">
+ 
+  <link rel="stylesheet" href="style.css">
+ 
+  <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+  <script src="index.js"></script>
+</head>
+<body>
+  <div id="videos" class="videos">
+    <div id="localVideoContainer" class="videoContainer">
+      <video id="localVideo" autoplay muted></video>
     </div>
-
-    <div style="margin-top: 10px;">
-      <input type="button" id="start" onclick="start(true)" value="start WebRTC"></input>
-    </div>
-
-    <script type="text/javascript">
-        pageReady();
-    </script>
-  </body>
+  </div>
+ 
+  <script type="text/javascript">
+    start();
+  </script>
+</body>
 </html>
