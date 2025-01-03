@@ -99,19 +99,25 @@ async fn ws_route(rq: HttpRequest, stream: Payload, conns: Data::<AtomicConns>) 
 #[cfg(feature = "gen_crt")]
 fn get_signaling_cfg() -> ServerConfig {
     use {
-        std::io::BufReader,
-        actix_web::web::Buf,
+        std::{io::BufReader, fs::File},
         rustls::{Certificate, PrivateKey},
         rustls_pemfile::{certs, rsa_private_keys, pkcs8_private_keys}
     };
 
-    let key_file = &mut BufReader::new(include_bytes!("./certs/key.pem").reader());
-    let cert_file = &mut BufReader::new(include_bytes!("./certs/cert.pem").reader());
+    const KEY_FILE: &str = "./certs/key.pem";
+    const CERT_FILE: &str = "./certs/cert.pem";
+
+    let (Ok(key_file), Ok(cert_file)) = (File::open(KEY_FILE), File::open(CERT_FILE)) else {
+        panic!("run `bash ./gen_crt.sh` first")
+    };
+
+    let key_file = &mut BufReader::new(key_file);
+    let cert_file = &mut BufReader::new(cert_file);
 
     let mut keys = pkcs8_private_keys(key_file).unwrap().into_iter().map(PrivateKey).collect::<Vec::<_>>();
 
     if keys.is_empty() {
-        let key_file = &mut BufReader::new(include_bytes!("./certs/key.pem").reader());
+        let key_file = &mut BufReader::new(File::open(KEY_FILE).unwrap());
         keys = rsa_private_keys(key_file).unwrap().into_iter().map(PrivateKey).collect()
     }
 
