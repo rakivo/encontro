@@ -7,6 +7,7 @@
     "sourceMap": false,
     "declaration": false,
     "esModuleInterop": true,
+    "lib": ["dom", "esnext"],
   },
   "include": ["frontend/**/*"],
   "exclude": ["node_modules"],

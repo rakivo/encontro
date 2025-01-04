@@ -8,10 +8,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-let peerConnections = {};
 let videoEncoder = null;
-let localUuid, localDisplayName, localStream;
 let serverConnection = null;
+let peerConnections = {};
+let localUuid, localDisplayName, localStream;
 const WS_PORT = 8443;
 const PEER_CONNECTION_CFG = {
     iceServers: [
@@ -67,7 +67,7 @@ function initializeCodecs(stream) {
             },
             error: (e) => console.error(e),
         });
-        yield videoEncoder.configure(ENCODER_CFG);
+        videoEncoder.configure(ENCODER_CFG);
         const processFrames = () => __awaiter(this, void 0, void 0, function* () {
             try {
                 while (true) {
@@ -152,7 +152,7 @@ function setUpPeer(peerUuid, displayName, initCall = false) {
             },
             error: (e) => console.error(e),
         });
-        yield peerConnection.videoDecoder.configure(DECODER_CFG);
+        peerConnection.videoDecoder.configure(DECODER_CFG);
     });
     dataChannel.onmessage = (event) => __awaiter(this, void 0, void 0, function* () {
         var _a;
