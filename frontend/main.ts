@@ -4,8 +4,11 @@ type PeerConnection = {
   pc: RTCPeerConnection;
   dataChannel?: RTCDataChannel;
   videoDecoder?: VideoDecoder;
+  audioEncoder?: AudioEncoder;
+  audioDecoder?: AudioDecoder;
 };
 
+let audioEncoder: AudioEncoder | null = null;
 let videoEncoder: VideoEncoder | null = null;
 let serverConnection: WebSocket | null = null;
 let peerConnections: Record<string, PeerConnection> = {};
@@ -19,37 +22,56 @@ const PEER_CONNECTION_CFG: RTCConfiguration = {
   ],
 };
 
+const VIDEO_STREAM_WIDTH: number = 1280;
+const VIDEO_STREAM_HEIGHT: number = 720;
+const VIDEO_STREAM_FRAME_RATE: number = 30;
+
 const CONSTRAINTS: MediaStreamConstraints = {
   video: {
-    width: { ideal: 1280, max: 1280 },
-    height: { ideal: 720, max: 720 },
-    frameRate: { ideal: 30, max: 30 },
+    width: { ideal: VIDEO_STREAM_WIDTH, max: VIDEO_STREAM_WIDTH },
+    height: { ideal: VIDEO_STREAM_HEIGHT, max: VIDEO_STREAM_HEIGHT },
+    frameRate: { ideal: VIDEO_STREAM_FRAME_RATE, max: VIDEO_STREAM_FRAME_RATE },
   },
-  audio: false,
+  audio: true,
 };
 
-const ENCODER_CFG: VideoEncoderConfig = {
+const VIDEO_ENCODER_CFG: VideoEncoderConfig = {
   codec: 'vp8',
-  width: 1280,
-  height: 720,
-  framerate: 30,
+  width: VIDEO_STREAM_WIDTH,
+  height: VIDEO_STREAM_HEIGHT,
+  framerate: VIDEO_STREAM_FRAME_RATE,
   bitrate: 1_000_000,
   latencyMode: 'realtime',
 };
 
-const DECODER_CFG: VideoDecoderConfig = {
-  codec: ENCODER_CFG.codec,
-  codedWidth: ENCODER_CFG.width,
-  codedHeight: ENCODER_CFG.height,
+const VIDEO_DECODER_CFG: VideoDecoderConfig = {
+  codec: VIDEO_ENCODER_CFG.codec,
+  codedWidth: VIDEO_ENCODER_CFG.width,
+  codedHeight: VIDEO_ENCODER_CFG.height,
   hardwareAcceleration: "no-preference",
+};
+
+const AUDIO_ENCODER_CFG: AudioEncoderConfig = {
+  codec: 'opus',
+  numberOfChannels: 1,
+  sampleRate: 48000,
+  bitrate: 64000,
+};
+
+const AUDIO_DECODER_CFG: AudioDecoderConfig = {
+  codec: AUDIO_ENCODER_CFG.codec,
+  numberOfChannels: AUDIO_ENCODER_CFG.numberOfChannels,
+  sampleRate: AUDIO_ENCODER_CFG.sampleRate,
 };
 
 async function initializeCodecs(stream: MediaStream): Promise<void> {
   if (!('VideoEncoder' in window)) return;
 
   const videoTrack = stream.getVideoTracks()[0];
-  const trackProcessor = new MediaStreamTrackProcessor({ track: videoTrack });
-  const frameReader = trackProcessor.readable.getReader();
+  const audioTrack = stream.getAudioTracks()[0];
+
+  const videoProcessor = new MediaStreamTrackProcessor({ track: videoTrack });
+  const videoReader = videoProcessor.readable.getReader();
 
   videoEncoder = new VideoEncoder({
     output: (encodedChunk: EncodedVideoChunk) => {
@@ -71,12 +93,12 @@ async function initializeCodecs(stream: MediaStream): Promise<void> {
     error: (e) => console.error(e),
   });
 
-  videoEncoder.configure(ENCODER_CFG);
+  videoEncoder.configure(VIDEO_ENCODER_CFG);
 
-  const processFrames = async () => {
+  const processVideoFrames = async () => {
     try {
       while (true) {
-        const { value: frame, done } = await frameReader.read();
+        const { value: frame, done } = await videoReader.read();
         if (done) break;
         if (videoEncoder?.state === 'configured') {
           videoEncoder?.encode(frame!);
@@ -88,7 +110,56 @@ async function initializeCodecs(stream: MediaStream): Promise<void> {
     }
   };
 
-  processFrames();
+  processVideoFrames();
+
+  if (audioTrack && 'AudioEncoder' in window) {
+    console.log(audioTrack.getSettings());
+    const audioProcessor = new MediaStreamTrackProcessor({ track: audioTrack });
+    const audioReader = audioProcessor.readable.getReader();
+
+    audioEncoder = new AudioEncoder({
+      output: (encodedChunk: EncodedAudioChunk) => {
+        const data = new ArrayBuffer(encodedChunk.byteLength);
+        const view = new Uint8Array(data);
+        encodedChunk.copyTo(view);
+
+        Object.values(peerConnections).forEach(peer => {
+          if (peer.dataChannel?.readyState === 'open') {
+            peer.dataChannel.send(JSON.stringify({
+              type: 'audio',
+              timestamp: encodedChunk.timestamp,
+              duration: encodedChunk.duration,
+            }));
+            peer.dataChannel.send(data);
+          }
+        });
+      },
+      error: (e) => console.error('Audio Encoder Error:', e),
+    });
+
+    audioEncoder.configure(AUDIO_ENCODER_CFG);
+
+    const processAudioFrames = async () => {
+      try {
+        while (true) {
+          const { value: frame, done } = await audioReader.read();
+          if (done) break;
+          if (audioEncoder?.state === 'configured' && frame) {
+            try {
+              audioEncoder.encode(frame);
+            } catch (e) {
+              console.error('Error encoding audio frame:', e);
+            }
+          }
+          frame.close();
+        }
+      } catch (e) {
+        console.error('Error processing audio frames:', e);
+      }
+    };
+
+    processAudioFrames();
+  }
 }
 
 async function start(): Promise<void> {
@@ -136,38 +207,67 @@ function setUpPeer(peerUuid: string, displayName: string, initCall = false): voi
     pc: new RTCPeerConnection(PEER_CONNECTION_CFG),
   };
 
-  const dataChannel = peerConnection.pc.createDataChannel('video-channel');
+  const dataChannel = peerConnection.pc.createDataChannel('media-channel');
   peerConnection.dataChannel = dataChannel;
 
-  let writable: WritableStreamDefaultWriter<VideoFrame> | undefined;
-  let mediaStreamGenerator: MediaStreamTrackGenerator<VideoFrame> | undefined;
   let metadata: any;
+
+  let videoWritable: WritableStreamDefaultWriter<VideoFrame> | undefined;
+  let videoStreamGenerator: MediaStreamTrackGenerator<VideoFrame> | undefined;
+
+  let audioStreamGenerator: MediaStreamTrackGenerator<AudioData> | undefined;
+  let audioWritable: WritableStreamDefaultWriter<AudioData> | undefined;
 
   dataChannel.onopen = async () => {
     if (!('VideoDecoder' in window)) return;
 
     peerConnection.videoDecoder = new VideoDecoder({
       output: (frame: VideoFrame) => {
-        if (!mediaStreamGenerator) {
-          mediaStreamGenerator = new MediaStreamTrackGenerator({ kind: 'video' });
-          writable = mediaStreamGenerator.writable.getWriter();
+        if (!videoStreamGenerator) {
+          videoStreamGenerator = new MediaStreamTrackGenerator({ kind: 'video' });
+          videoWritable = videoStreamGenerator.writable.getWriter();
 
-          const stream = new MediaStream([mediaStreamGenerator]);
+          const stream = new MediaStream([videoStreamGenerator]);
           const vidElement = document.querySelector(`#remoteVideo_${peerUuid} video`) as HTMLVideoElement;
-          if (vidElement) vidElement.srcObject = stream;
+          if (vidElement) {
+            vidElement.srcObject = stream;
+            vidElement.play().catch(e => console.error('Error playing video:', e));
+          }
         }
-        writable!.write(frame);
+        videoWritable!.write(frame);
       },
       error: (e) => console.error(e),
     });
 
-    peerConnection.videoDecoder.configure(DECODER_CFG);
+    peerConnection.videoDecoder.configure(VIDEO_DECODER_CFG);
+
+    if ('AudioDecoder' in window) {
+      peerConnection.audioDecoder = new AudioDecoder({
+        output: async (audioData: AudioData) => {
+          if (!audioStreamGenerator) {
+            audioStreamGenerator = new MediaStreamTrackGenerator({ kind: 'audio' });
+            audioWritable = audioStreamGenerator.writable.getWriter();
+
+            const stream = new MediaStream([audioStreamGenerator]);
+            const audioElement = document.querySelector(`#remoteAudio_${peerUuid}`) as HTMLAudioElement;
+            if (audioElement) {
+              audioElement.srcObject = stream;
+              audioElement.play().catch(e => console.error('Error playing audio:', e));
+            }
+          }
+          audioWritable!.write(audioData);
+        },
+        error: (e) => console.error('Audio decoder error:', e),
+      });
+
+      peerConnection.audioDecoder.configure(AUDIO_DECODER_CFG);
+    }
   };
 
   dataChannel.onmessage = async (event: MessageEvent) => {
     if (typeof event.data === 'string') {
       metadata = JSON.parse(event.data);
-    } else {
+    } else if (metadata.type === 'video') {
       const chunk = new EncodedVideoChunk({
         type: metadata.type,
         timestamp: metadata.timestamp,
@@ -178,10 +278,25 @@ function setUpPeer(peerUuid: string, displayName: string, initCall = false): voi
       if (peerConnection.videoDecoder?.state === 'configured') {
         peerConnection.videoDecoder.decode(chunk);
       }
+    } else if (metadata.type === 'audio') {
+      const chunk = new EncodedAudioChunk({
+        type: 'key',
+        timestamp: metadata.timestamp,
+        duration: metadata.duration,
+        data: event.data,
+      });
+
+      if (peerConnection.audioDecoder?.state === 'configured') {
+        peerConnection.audioDecoder.decode(chunk);
+      }
     }
   };
 
-  peerConnection.pc.ontrack = (event) => gotRemoteStream(event, peerUuid);
+  peerConnection.pc.ontrack = (event) => {
+    if (event.track.kind == 'video') {
+      gotRemoteStream(event, peerUuid);
+    }
+  };
   peerConnection.pc.onicecandidate = (event) => gotIceCandidate(event, peerUuid);
   peerConnection.pc.oniceconnectionstatechange = () => checkPeerDisconnect(peerUuid);
   localStream.getTracks().forEach(track => {
@@ -319,18 +434,21 @@ window.addEventListener("beforeunload", () => {
   if (videoEncoder?.state !== 'closed') {
     videoEncoder?.close();
   }
+  if (audioEncoder?.state !== 'closed') {
+    audioEncoder?.close();
+  }
 
   Object.values(peerConnections).forEach(peer => {
     if (peer.videoDecoder?.state !== 'closed') {
       peer.videoDecoder?.close();
+    }
+    if (peer.audioDecoder?.state !== 'closed') {
+      peer.audioDecoder?.close();
     }
     if (peer.dataChannel) {
       peer.dataChannel.close();
     }
   });
 
-  serverConnection?.send(JSON.stringify({
-    type: "peer-disconnect",
-    uuid: localUuid
-  }));
+  serverConnection?.send(JSON.stringify({type: "peer-disconnect", uuid: localUuid}));
 });
