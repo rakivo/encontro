@@ -1,4 +1,5 @@
 let peerConnections = {};
+let videoEncoder, videoDecoder;
 let localUuid, localDisplayName, localStream, serverConnection;
 
 const WS_PORT = 8443;
@@ -9,7 +10,85 @@ const PEER_CONNECTION_CFG = {
   ],
 };
 
-function start() {
+const CONSTRAINTS = {
+  video: {
+    width: { ideal: 1280, max: 1280 },
+    height: { ideal: 720, max: 720 },
+    frameRate: { ideal: 30, max: 30 }
+  },
+  audio: false
+};
+
+const ENCODER_CONFIG = {
+  codec: 'vp8',
+  vp8: {
+    bitrate: 1_000_000,
+    frameRate: 30,
+    keyFrameInterval: 20,
+  },
+
+  width: 1280,
+  height: 720,
+  framerate: 30,
+  bitrate: 1_000_000,
+  latencyMode: 'realtime',
+};
+
+const DECODER_CONFIG = {
+  codec: ENCODER_CONFIG.codec,
+  width: ENCODER_CONFIG.width,
+  height: ENCODER_CONFIG.height,
+  framerate: ENCODER_CONFIG.framerate
+};
+
+async function initializeCodecs(stream) {
+  if (!('VideoEncoder' in window)) return;
+
+  const videoTrack = stream.getVideoTracks()[0];
+  const trackProcessor = new MediaStreamTrackProcessor({ track: videoTrack });
+  const frameReader = trackProcessor.readable.getReader();
+
+  videoEncoder = new VideoEncoder({
+    output: encodedChunk => {
+      const data = new ArrayBuffer(encodedChunk.byteLength);
+      const view = new Uint8Array(data);
+      encodedChunk.copyTo(view);
+
+      Object.values(peerConnections).forEach(peer => {
+        if (peer.dataChannel?.readyState === 'open') {
+          peer.dataChannel.send(JSON.stringify({
+            type: encodedChunk.type,
+            timestamp: encodedChunk.timestamp,
+            duration: encodedChunk.duration
+          }));
+          peer.dataChannel.send(data);
+        }
+      });
+    },
+    error: e => console.error(e)
+  });
+
+  await videoEncoder.configure(ENCODER_CONFIG);
+
+  const processFrames = async () => {
+    try {
+      while (true) {
+        const { value: frame, done } = await frameReader.read();
+        if (done) break;
+        if (videoEncoder.state === 'configured') {
+          videoEncoder.encode(frame);
+        }
+        frame.close();
+      }
+    } catch (e) {
+      console.error('Error processing frames:', e);
+    }
+  };
+
+  processFrames();
+}
+
+async function start() {
   localUuid = createUUID();
 
   const urlParams = new URLSearchParams(window.location.search);
@@ -17,38 +96,105 @@ function start() {
 
   document.getElementById("localVideoContainer").appendChild(makeLabel(localDisplayName));
 
-  const CONSTRAINTS = {
-    video: { width: { max: 320 }, height: { max: 240 }, frameRate: { max: 30 } },
-    audio: false
-  };
+  try {
+    let stream;
 
-  if (navigator.mediaDevices.getDisplayMedia) {
-    navigator.mediaDevices.getDisplayMedia(CONSTRAINTS)
-      .then((stream) => {
-        localStream = stream;
-        document.getElementById("localVideo").srcObject = stream;
-      }).catch(errorHandler).then(() => {
-        serverConnection = new WebSocket(`wss://${location.hostname}:8443/ws/`);
-        serverConnection.onmessage = gotMessageFromServer;
-        serverConnection.onopen = () => {
-          serverConnection.send(JSON.stringify({
-            displayName: localDisplayName,
-            uuid: localUuid,
-            dest: "all",
-          }));
-        };
-      }).catch(errorHandler);
-  } else {
-    alert("Your browser does not support getDisplayMedia API");
+    if (navigator.mediaDevices.getDisplayMedia) {
+      stream = await navigator.mediaDevices.getDisplayMedia(CONSTRAINTS);
+    } else if (navigator.mediaDevices.getUserMedia) {
+      stream = await navigator.mediaDevices.getUserMedia(CONSTRAINTS);
+    } else {
+      alert("Your browser does not support neither getDisplayMedia or getUserMedia API");
+      return;
+    }
+
+    localStream = stream;
+
+    const localVideo = document.getElementById("localVideo");
+    localVideo.srcObject = stream;
+    
+    await initializeCodecs(stream);
+
+    serverConnection = new WebSocket(`wss://${location.hostname}:${WS_PORT}/ws/`);
+    serverConnection.onmessage = gotMessageFromServer;
+    serverConnection.onopen = () => {
+      serverConnection.send(JSON.stringify({
+        displayName: localDisplayName,
+        uuid: localUuid,
+        dest: "all",
+      }));
+    };
+  } catch (error) {
+    errorHandler(error);
   }
 }
 
-window.addEventListener("beforeunload", () => {
-  serverConnection.send(JSON.stringify({
-    type: "peer-disconnect",
-    uuid: localUuid
-  }));
-});
+function setUpPeer(peerUuid, displayName, initCall = false) {
+  peerConnections[peerUuid] = {
+    displayName,
+    pc: new RTCPeerConnection(PEER_CONNECTION_CFG),
+  };
+
+  const dataChannel = peerConnections[peerUuid].pc.createDataChannel('video-channel');
+  peerConnections[peerUuid].dataChannel = dataChannel;
+  
+  let writable;
+  let metadata;
+  let mediaStreamGenerator;
+  let chunksData = new Uint8Array();
+
+  dataChannel.onopen = async () => {
+    if (!('VideoDecoder' in window)) return;
+
+    peerConnections[peerUuid].videoDecoder = new VideoDecoder({
+      output: frame => {
+        if (!mediaStreamGenerator) {
+          mediaStreamGenerator = new MediaStreamTrackGenerator({ kind: 'video' });
+          writable = mediaStreamGenerator.writable.getWriter();
+          
+          const stream = new MediaStream([mediaStreamGenerator]);
+          const vidElement = document.querySelector(`#remoteVideo_${peerUuid} video`);
+          if (vidElement) {
+            vidElement.srcObject = stream;
+          }
+        }
+        writable.write(frame);
+      },
+      error: e => console.error(e)
+    });
+
+    await peerConnections[peerUuid].videoDecoder.configure(DECODER_CONFIG);
+  };
+
+  dataChannel.onmessage = async event => {
+    if (typeof event.data === 'string') {
+      metadata = JSON.parse(event.data);
+    } else {
+      const chunk = new EncodedVideoChunk({
+        type: metadata.type,
+        timestamp: metadata.timestamp,
+        duration: metadata.duration,
+        data: event.data
+      });
+
+      if (peerConnections[peerUuid].videoDecoder?.state === 'configured') {
+        peerConnections[peerUuid].videoDecoder.decode(chunk);
+      }
+    }
+  };
+
+  peerConnections[peerUuid].pc.ontrack = (event) => gotRemoteStream(event, peerUuid);
+  peerConnections[peerUuid].pc.onicecandidate = (event) => gotIceCandidate(event, peerUuid);
+  peerConnections[peerUuid].pc.oniceconnectionstatechange = (event) => checkPeerDisconnect(event, peerUuid);
+  peerConnections[peerUuid].pc.addStream(localStream);
+
+  if (initCall) {
+    peerConnections[peerUuid].pc
+      .createOffer()
+      .then((description) => createdDescription(description, peerUuid))
+      .catch(errorHandler);
+  }
+}
 
 function gotMessageFromServer(message) {
   const signal = JSON.parse(message.data);
@@ -57,7 +203,6 @@ function gotMessageFromServer(message) {
   if (peerUuid === localUuid || (signal.dest !== localUuid && signal.dest !== "all")) return;
 
   if (signal.type === "peer-disconnect") {
-    const peerUuid = signal.uuid;
     if (peerConnections[peerUuid]) {
       console.log(`Peer ${peerUuid} disconnected`);
       delete peerConnections[peerUuid];
@@ -94,23 +239,6 @@ function gotMessageFromServer(message) {
   }
 }
 
-function setUpPeer(peerUuid, displayName, initCall = false) {
-  peerConnections[peerUuid] = {
-    displayName,
-    pc: new RTCPeerConnection(PEER_CONNECTION_CFG),
-  };
-  peerConnections[peerUuid].pc.onicecandidate = (event) => gotIceCandidate(event, peerUuid);
-  peerConnections[peerUuid].pc.ontrack = (event) => gotRemoteStream(event, peerUuid);
-  peerConnections[peerUuid].pc.oniceconnectionstatechange = (event) => checkPeerDisconnect(event, peerUuid);
-  peerConnections[peerUuid].pc.addStream(localStream);
-  if (initCall) {
-    peerConnections[peerUuid].pc
-      .createOffer()
-      .then((description) => createdDescription(description, peerUuid))
-      .catch(errorHandler);
-  }
-}
-
 function gotRemoteStream(event, peerUuid) {
   const vidElement = document.createElement("video");
   vidElement.setAttribute("autoplay", "");
@@ -124,7 +252,6 @@ function gotRemoteStream(event, peerUuid) {
   vidContainer.appendChild(makeLabel(peerConnections[peerUuid].displayName));
 
   document.getElementById("videos").appendChild(vidContainer);
-
   updateLayout();
 }
 
@@ -137,6 +264,26 @@ function checkPeerDisconnect(event, peerUuid) {
     updateLayout();
   }
 }
+
+window.addEventListener("beforeunload", () => {
+  if (videoEncoder?.state !== 'closed') {
+    videoEncoder.close();
+  }
+  
+  Object.values(peerConnections).forEach(peer => {
+    if (peer.videoDecoder?.state !== 'closed') {
+      peer.videoDecoder.close();
+    }
+    if (peer.dataChannel) {
+      peer.dataChannel.close();
+    }
+  });
+  
+  serverConnection.send(JSON.stringify({
+    type: "peer-disconnect",
+    uuid: localUuid
+  }));
+});
 
 function gotIceCandidate(event, peerUuid) {
   if (event.candidate != null) {
