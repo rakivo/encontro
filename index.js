@@ -19,7 +19,7 @@ const CONSTRAINTS = {
   audio: false
 };
 
-const ENCODER_CONFIG = {
+const ENCODER_CFG = {
   codec: 'vp8',
   vp8: {
     bitrate: 1_000_000,
@@ -34,11 +34,11 @@ const ENCODER_CONFIG = {
   latencyMode: 'realtime',
 };
 
-const DECODER_CONFIG = {
-  codec: ENCODER_CONFIG.codec,
-  width: ENCODER_CONFIG.width,
-  height: ENCODER_CONFIG.height,
-  framerate: ENCODER_CONFIG.framerate
+const DECODER_CFG = {
+  codec: ENCODER_CFG.codec,
+  width: ENCODER_CFG.width,
+  height: ENCODER_CFG.height,
+  framerate: ENCODER_CFG.framerate
 };
 
 async function initializeCodecs(stream) {
@@ -68,7 +68,7 @@ async function initializeCodecs(stream) {
     error: e => console.error(e)
   });
 
-  await videoEncoder.configure(ENCODER_CONFIG);
+  await videoEncoder.configure(ENCODER_CFG);
 
   const processFrames = async () => {
     try {
@@ -163,7 +163,7 @@ function setUpPeer(peerUuid, displayName, initCall = false) {
       error: e => console.error(e)
     });
 
-    await peerConnections[peerUuid].videoDecoder.configure(DECODER_CONFIG);
+    await peerConnections[peerUuid].videoDecoder.configure(DECODER_CFG);
   };
 
   dataChannel.onmessage = async event => {
