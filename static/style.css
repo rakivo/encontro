@@ -1,0 +1,25 @@
+body {
+    background: rgb(28, 28, 28);
+}
+
+.videoContainer.fullscreen {
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: none !important;
+    max-height: none !important;
+}
+
+.fullscreen video {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: contain !important;
+}
+
+.videoLabel {
+    color: white;
+    font-size: 40px;
+}
+
+.fullscreen-btn:hover {
+    background: rgba(0, 0, 0, 0.7);
+}

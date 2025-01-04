@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@types/dom-mediacapture-transform": "^0.1.10",
+    "typescript": "^5.7.2"
+  }
+}
