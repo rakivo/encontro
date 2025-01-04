@@ -9,9 +9,6 @@ use rustls::ServerConfig;
 use actix::{Actor, Handler, Message, Recipient, ActorContext, AsyncContext, StreamHandler};
 use actix_web::{get, App, Error, HttpRequest, HttpResponse, HttpServer, web::{Data, Payload}};
 
-mod paths;
-use paths::*;
-
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 type Conns = HashMap::<usize, WsConn>;
@@ -101,7 +98,9 @@ async fn ws_route(rq: HttpRequest, stream: Payload, conns: Data::<AtomicConns>) 
 
 #[cfg(feature = "gen_crt")]
 fn get_signaling_cfg() -> ServerConfig {
+    mod paths;
     use {
+        paths::*,
         std::{io::BufReader, fs::File},
         rustls::{Certificate, PrivateKey},
         rustls_pemfile::{certs, rsa_private_keys, pkcs8_private_keys}
@@ -168,6 +167,6 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .service(ws_route)
             .app_data(Data::new(Arc::clone(&conns)))
-            .service(Files::new("/", "./static/").index_file("index.html"))
+            .service(Files::new("/", "./frontend/static/").index_file("index.html"))
     }).bind_rustls_021("0.0.0.0:8443", cfg)?.run().await
 }

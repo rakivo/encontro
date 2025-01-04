@@ -2,10 +2,17 @@
 name = "encontro"
 version = "0.1.0"
 edition = "2021"
+authors = ["Mark Tyrkba <marktyrkba456@gmail.com>"]
+default-run = "encontro"
 
 [[bin]]
 name = "encontro"
-path = "main.rs"
+path = "backend/main.rs"
+
+[[bin]]
+name = "generate_certs"
+path = "backend/gen_crt.rs"
+required-features = ["gen_crt"]
 
 [features]
 default = []
@@ -21,8 +28,3 @@ actix = { version = "0.13.5", default-features = false, features = ["macros"] }
 rcgen = { version = "0.13.2", default-features = false, features = ["pem", "ring", "crypto"] }
 
 rustls-pemfile = { version = "1.0", default-features = false, optional = true }
-
-[[bin]]
-path = "gen_crt.rs"
-name = "generate_certs"
-required-features = ["gen_crt"]
