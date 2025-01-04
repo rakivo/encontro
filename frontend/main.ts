@@ -4,7 +4,6 @@ type PeerConnection = {
   pc: RTCPeerConnection;
   dataChannel?: RTCDataChannel;
   videoDecoder?: VideoDecoder;
-  audioEncoder?: AudioEncoder;
   audioDecoder?: AudioDecoder;
 };
 
