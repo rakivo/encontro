@@ -2,4 +2,5 @@
 certs
 target
 Cargo.lock
+gen_crt.sh
 node_modules

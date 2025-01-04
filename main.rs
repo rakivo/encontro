@@ -9,6 +9,9 @@ use rustls::ServerConfig;
 use actix::{Actor, Handler, Message, Recipient, ActorContext, AsyncContext, StreamHandler};
 use actix_web::{get, App, Error, HttpRequest, HttpResponse, HttpServer, web::{Data, Payload}};
 
+mod paths;
+use paths::*;
+
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 type Conns = HashMap::<usize, WsConn>;
@@ -103,9 +106,6 @@ fn get_signaling_cfg() -> ServerConfig {
         rustls::{Certificate, PrivateKey},
         rustls_pemfile::{certs, rsa_private_keys, pkcs8_private_keys}
     };
-
-    const KEY_FILE: &str = "./certs/key.pem";
-    const CERT_FILE: &str = "./certs/cert.pem";
 
     let (Ok(key_file), Ok(cert_file)) = (File::open(KEY_FILE), File::open(CERT_FILE)) else {
         panic!("run `bash ./gen_crt.sh` first")

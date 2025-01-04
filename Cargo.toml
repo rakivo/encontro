@@ -8,18 +8,21 @@ name = "encontro"
 path = "main.rs"
 
 [features]
-gen_crt = ["dep:rustls-pemfile"]
-default = ["dep:rcgen"]
+default = []
+gen_crt = ["rustls-pemfile"]
 
 [dependencies]
+tokio = { version = "1.35", features = ["sync"] }
+rustls = { version = "0.21", default-features = false }
 actix-web = { version = "4.9", features = ["rustls-0_21"] }
 actix-files = { version = "0.6", default-features = false }
 actix-web-actors = { version = "4.2", default-features = false }
 actix = { version = "0.13.5", default-features = false, features = ["macros"] }
-
-tokio = { version = "1.35", features = ["sync"] }
-
-rustls = { version = "0.21", default-features = false }
+rcgen = { version = "0.13.2", default-features = false, features = ["pem", "ring", "crypto"] }
 
 rustls-pemfile = { version = "1.0", default-features = false, optional = true }
-rcgen = { version = "0.13.2", default-features = false, features = ["ring", "crypto"], optional = true }
+
+[[bin]]
+path = "gen_crt.rs"
+name = "generate_certs"
+required-features = ["gen_crt"]
