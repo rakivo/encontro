@@ -49,7 +49,7 @@ const AUDIO_ENCODER_CFG = {
     codec: 'opus',
     numberOfChannels: 1,
     sampleRate: 48000,
-    bitrate: 64000,
+    bitrate: 128000,
 };
 const AUDIO_DECODER_CFG = {
     codec: AUDIO_ENCODER_CFG.codec,
@@ -166,7 +166,11 @@ function start() {
             serverConnection = new WebSocket(`wss://${location.hostname}:${WS_PORT}/ws/`);
             serverConnection.onmessage = (msg) => gotMessageFromServer(msg);
             serverConnection.onopen = () => {
-                serverConnection.send(JSON.stringify({ displayName: localDisplayName, uuid: localUuid, dest: "all" }));
+                serverConnection.send(JSON.stringify({
+                    displayName: localDisplayName,
+                    uuid: localUuid,
+                    dest: "all"
+                }));
             };
         }
         catch (error) {
@@ -269,7 +273,7 @@ function setUpPeer(peerUuid, displayName, initCall = false) {
         }
     });
     peerConnection.pc.ontrack = (event) => {
-        if (event.track.kind == 'video') {
+        if (event.track.kind === 'video') {
             gotRemoteStream(event, peerUuid);
         }
     };
@@ -296,7 +300,11 @@ function gotMessageFromServer(message) {
     }
     if (signal.displayName && signal.dest === "all") {
         setUpPeer(peerUuid, signal.displayName);
-        serverConnection.send(JSON.stringify({ displayName: localDisplayName, uuid: localUuid, dest: peerUuid }));
+        serverConnection.send(JSON.stringify({
+            displayName: localDisplayName,
+            uuid: localUuid,
+            dest: peerUuid
+        }));
     }
     else if (signal.displayName && signal.dest === localUuid) {
         setUpPeer(peerUuid, signal.displayName, true);
@@ -353,7 +361,11 @@ function checkPeerDisconnect(peerUuid) {
 }
 function gotIceCandidate(event, peerUuid) {
     if (event.candidate) {
-        serverConnection.send(JSON.stringify({ ice: event.candidate, uuid: localUuid, dest: peerUuid }));
+        serverConnection.send(JSON.stringify({
+            ice: event.candidate,
+            uuid: localUuid,
+            dest: peerUuid
+        }));
     }
 }
 function createdDescription(description, peerUuid) {
@@ -364,8 +376,7 @@ function createdDescription(description, peerUuid) {
             uuid: localUuid,
             dest: peerUuid,
         }));
-    })
-        .catch(errorHandler);
+    }).catch(errorHandler);
 }
 function updateLayout() {
     const numVideos = Object.keys(peerConnections).length + 1;
@@ -405,5 +416,8 @@ window.addEventListener("beforeunload", () => {
             peer.dataChannel.close();
         }
     });
-    serverConnection === null || serverConnection === void 0 ? void 0 : serverConnection.send(JSON.stringify({ type: "peer-disconnect", uuid: localUuid }));
+    serverConnection === null || serverConnection === void 0 ? void 0 : serverConnection.send(JSON.stringify({
+        type: "peer-disconnect",
+        uuid: localUuid
+    }));
 });

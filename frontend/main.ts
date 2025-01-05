@@ -54,7 +54,7 @@ const AUDIO_ENCODER_CFG: AudioEncoderConfig = {
   codec: 'opus',
   numberOfChannels: 1,
   sampleRate: 48000,
-  bitrate: 64000,
+  bitrate: 128000,
 };
 
 const AUDIO_DECODER_CFG: AudioDecoderConfig = {
@@ -180,9 +180,11 @@ async function start(): Promise<void> {
     serverConnection = new WebSocket(`wss://${location.hostname}:${WS_PORT}/ws/`);
     serverConnection.onmessage = (msg) => gotMessageFromServer(msg);
     serverConnection.onopen = () => {
-      serverConnection!.send(
-        JSON.stringify({ displayName: localDisplayName, uuid: localUuid, dest: "all" })
-      );
+      serverConnection!.send(JSON.stringify({
+        displayName: localDisplayName,
+        uuid: localUuid,
+        dest: "all"
+      }));
     };
   } catch (error) {
     errorHandler(error);
@@ -292,7 +294,7 @@ function setUpPeer(peerUuid: string, displayName: string, initCall = false): voi
   };
 
   peerConnection.pc.ontrack = (event) => {
-    if (event.track.kind == 'video') {
+    if (event.track.kind === 'video') {
       gotRemoteStream(event, peerUuid);
     }
   };
@@ -323,9 +325,11 @@ function gotMessageFromServer(message: MessageEvent): void {
 
   if (signal.displayName && signal.dest === "all") {
     setUpPeer(peerUuid, signal.displayName);
-    serverConnection!.send(
-      JSON.stringify({ displayName: localDisplayName, uuid: localUuid, dest: peerUuid })
-    );
+    serverConnection!.send(JSON.stringify({
+      displayName: localDisplayName,
+      uuid: localUuid,
+      dest: peerUuid
+    }));
   } else if (signal.displayName && signal.dest === localUuid) {
     setUpPeer(peerUuid, signal.displayName, true);
   } else if (signal.sdp) {
@@ -384,24 +388,23 @@ function checkPeerDisconnect(peerUuid: string): void {
 
 function gotIceCandidate(event: RTCPeerConnectionIceEvent, peerUuid: string): void {
   if (event.candidate) {
-    serverConnection!.send(
-      JSON.stringify({ ice: event.candidate, uuid: localUuid, dest: peerUuid })
-    );
+    serverConnection!.send(JSON.stringify({
+      ice: event.candidate,
+      uuid: localUuid,
+      dest: peerUuid
+    }));
   }
 }
 
 function createdDescription(description: RTCSessionDescriptionInit, peerUuid: string): void {
   peerConnections[peerUuid].pc.setLocalDescription(description)
     .then(() => {
-      serverConnection!.send(
-        JSON.stringify({
-          sdp: peerConnections[peerUuid].pc.localDescription,
-          uuid: localUuid,
-          dest: peerUuid,
-        })
-      );
-    })
-    .catch(errorHandler);
+      serverConnection!.send(JSON.stringify({
+        sdp: peerConnections[peerUuid].pc.localDescription,
+        uuid: localUuid,
+        dest: peerUuid,
+      }));
+    }).catch(errorHandler);
 }
 
 function updateLayout(): void {
@@ -449,5 +452,8 @@ window.addEventListener("beforeunload", () => {
     }
   });
 
-  serverConnection?.send(JSON.stringify({type: "peer-disconnect", uuid: localUuid}));
+  serverConnection?.send(JSON.stringify({
+    type: "peer-disconnect",
+    uuid: localUuid
+  }));
 });
